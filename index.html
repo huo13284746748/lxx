@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhysiTwin - 物理 AI 空间手势数字孪生控制台</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #input-video {
+            display: none;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            color: rgba(255, 255, 255, 0.9);
+            user-select: none;
+            background: rgba(10, 15, 30, 0.75);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(0, 255, 204, 0.3);
+            border-radius: 12px;
+            padding: 16px 20px;
+            box-shadow: 0 0 20px rgba(0, 255, 204, 0.15);
+            max-width: 360px;
+        }
+
+        h1 {
+            margin: 0 0 8px 0;
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: #00ffcc;
+            text-shadow: 0 0 10px rgba(0, 255, 204, 0.6);
+        }
+
+        .instruction {
+            font-size: 0.82rem;
+            line-height: 1.5;
+            color: rgba(255, 255, 255, 0.75);
+        }
+
+        .instruction b {
+            color: #ffaa00;
+        }
+
+        .status-container {
+            margin-top: 12px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        .status {
+            font-size: 0.88rem;
+            font-weight: bold;
+            color: #00ffcc;
+            text-shadow: 0 0 8px rgba(0, 255, 204, 0.4);
+        }
+
+        .hardware-sync {
+            margin-top: 6px;
+            font-size: 0.75rem;
+            color: #ffaa00;
+        }
+
+        /* 模拟控制按钮栏 */
+        .sim-controls {
+            margin-top: 10px;
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .sim-btn {
+            background: rgba(0, 255, 204, 0.15);
+            border: 1px solid rgba(0, 255, 204, 0.4);
+            color: #00ffcc;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .sim-btn:hover {
+            background: rgba(0, 255, 204, 0.4);
+            color: #fff;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 15px;
+            z-index: 20;
+            text-align: center;
+            background: rgba(10, 15, 30, 0.95);
+            padding: 30px;
+            border-radius: 12px;
+            border: 1px solid #00ffcc;
+            box-shadow: 0 0 30px rgba(0, 255, 204, 0.3);
+            max-width: 420px;
+        }
+        
+        #webcam-preview {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 160px;
+            height: 120px;
+            z-index: 10;
+            border: 2px solid rgba(0, 255, 204, 0.4);
+            border-radius: 8px;
+            opacity: 0.8;
+            transform: scaleX(-1);
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.8);
+            background: #111;
+        }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="loading">
+        正在初始化 PhysiTwin 核心...<br>
+        <span style="font-size:13px; opacity:0.7">正在请求摄像头权限（如无摄像头将自动启用鼠标模拟模式）</span>
+    </div>
+
+    <div id="ui-layer">
+        <h1>PhysiTwin Console</h1>
+        <div class="instruction">
+            ✋ <b>张开</b>: 相机靠近 | ✊ <b>握拳</b>: 相机拉远<br>
+            🔄 <b>转腕</b>: 环绕旋转 | 👍 <b>点赞</b>: 重置视角<br>
+            👌 <b>OK</b>: 超新星爆炸 | ✌️ <b>剪刀手</b>: 切换色彩<br>
+            <i>💡 无摄像头时可直接用下方按钮或鼠标拖拽</i>
+        </div>
+        <div class="sim-controls">
+            <button class="sim-btn" onclick="simAction('EXPLODE')">👌 爆炸</button>
+            <button class="sim-btn" onclick="simAction('COLOR')">✌️ 变色</button>
+            <button class="sim-btn" onclick="simAction('RESET')">👍 重置</button>
+            <button class="sim-btn" onclick="simAction('ZOOM_IN')">✋ 靠近</button>
+            <button class="sim-btn" onclick="simAction('ZOOM_OUT')">✊ 拉远</button>
+        </div>
+        <div class="status-container">
+            <div id="gesture-status" class="status">状态: 鼠标/模拟控制就绪</div>
+            <div id="ws-status" class="hardware-sync">🔗 硬件链路: 独立模拟模式</div>
+        </div>
+    </div>
+
+    <video id="input-video" playsinline></video>
+    <canvas id="webcam-preview"></canvas>
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        const CONFIG = {
+            particleCount: 8000,
+            ringParticleCount: 4000,
+            minDistance: 120,
+            maxDistance: 800,
+            defaultDistance: 300,
+            rotationSpeedMultiplier: 0.05
+        };
+
+        const COLOR_PALETTE = [
+            { name: "赛博橙 (Cyber Orange)", color: 0xff6600 },
+            { name: "冰川蓝 (Ice Blue)", color: 0x00ffff },
+            { name: "极客绿 (Matrix Green)", color: 0x00ff66 },
+            { name: "霓虹紫 (Neon Purple)", color: 0xff00ff }
+        ];
+        let currentColorIndex = 0;
+        let targetPlanetColor = new THREE.Color(COLOR_PALETTE[0].color);
+        let lastColorChangeTime = 0;
+
+        let scene, camera, renderer, composer;
+        let planetSystem, ringSystem1, ringSystem2;
+        let planetMat;
+        let time = 0;
+
+        window.isExploding = false;
+        window.explosionFactor = 0;
+        window.isResettingCamera = false;
+
+        const cameraState = {
+            radius: CONFIG.defaultDistance,
+            theta: Math.PI / 2,
+            phi: 0,
+            zoomVelocity: 0,
+            targetRadius: CONFIG.defaultDistance,
+            isFist: false,
+            isOpen: false,
+            handRotation: 0
+        };
+
+        const statusEl = document.getElementById('gesture-status');
+        const loadingEl = document.getElementById('loading');
+
+        function initThree() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.0005);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 2000);
+            camera.position.set(0, 0, CONFIG.defaultDistance);
+
+            renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+            bloomPass.threshold = 0;
+            bloomPass.strength = 2.0;
+            bloomPass.radius = 0.5;
+
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            const particleTexture = createParticleTexture();
+
+            const planetGeo = new THREE.BufferGeometry();
+            const planetPos = [];
+            const planetSizes = [];
+
+            for (let i = 0; i < CONFIG.particleCount; i++) {
+                const u = Math.random();
+                const v = Math.random();
+                const theta = 2 * Math.PI * u;
+                const phi = Math.acos(2 * v - 1);
+                
+                let r = 50; 
+                if (Math.random() > 0.8) r = 50 * Math.random();
+
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.sin(phi) * Math.sin(theta);
+                const z = r * Math.cos(phi);
+
+                planetPos.push(x, y, z);
+                planetSizes.push(Math.random() * 2 + 1);
+            }
+
+            planetGeo.setAttribute('position', new THREE.Float32BufferAttribute(planetPos, 3));
+            planetGeo.setAttribute('size', new THREE.Float32BufferAttribute(planetSizes, 1));
+            planetGeo.setAttribute('originalPosition', new THREE.Float32BufferAttribute(planetPos, 3));
+
+            planetMat = new THREE.PointsMaterial({
+                color: targetPlanetColor,
+                size: 3,
+                map: particleTexture,
+                transparent: true,
+                opacity: 0.9,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+
+            planetSystem = new THREE.Points(planetGeo, planetMat);
+            scene.add(planetSystem);
+
+            const createRing = (radiusInner, radiusOuter, count, tiltX, tiltZ) => {
+                const geo = new THREE.BufferGeometry();
+                const pos = [];
+                for(let i=0; i<count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const r = THREE.MathUtils.lerp(radiusInner, radiusOuter, Math.random());
+                    const x = r * Math.cos(angle);
+                    const y = (Math.random() - 0.5) * 2;
+                    const z = r * Math.sin(angle);
+                    pos.push(x, y, z);
+                }
+                geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+                const mat = new THREE.PointsMaterial({
+                    color: 0xffffff,
+                    size: 2,
+                    map: particleTexture,
+                    transparent: true,
+                    opacity: 0.6,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false
+                });
+                const sys = new THREE.Points(geo, mat);
+                sys.rotation.x = tiltX;
+                sys.rotation.z = tiltZ;
+                return sys;
+            };
+
+            ringSystem1 = createRing(70, 110, CONFIG.ringParticleCount, Math.PI / 3, Math.PI / 6);
+            ringSystem2 = createRing(80, 140, CONFIG.ringParticleCount, -Math.PI / 4, -Math.PI / 8);
+            
+            scene.add(ringSystem1);
+            scene.add(ringSystem2);
+
+            window.addEventListener('resize', onWindowResize);
+
+            // 鼠标拖拽旋转与滚轮缩放支持
+            let isDragging = false;
+            let prevMouseX = 0, prevMouseY = 0;
+            window.addEventListener('mousedown', (e) => { isDragging = true; prevMouseX = e.clientX; prevMouseY = e.clientY; });
+            window.addEventListener('mouseup', () => { isDragging = false; });
+            window.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                const deltaX = e.clientX - prevMouseX;
+                cameraState.phi -= deltaX * 0.005;
+                prevMouseX = e.clientX;
+                prevMouseY = e.clientY;
+            });
+            window.addEventListener('wheel', (e) => {
+                cameraState.radius += e.deltaY * 0.5;
+                if (cameraState.radius < CONFIG.minDistance) cameraState.radius = CONFIG.minDistance;
+                if (cameraState.radius > 2000) cameraState.radius = 2000;
+            });
+        }
+
+        function createParticleTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32;
+            canvas.height = 32;
+            const context = canvas.getContext('2d');
+            const gradient = context.createRadialGradient(16, 16, 0, 16, 16, 16);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            gradient.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            context.fillStyle = gradient;
+            context.fillRect(0, 0, 32, 32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function updateCamera() {
+            if (window.isResettingCamera) {
+                cameraState.radius = THREE.MathUtils.lerp(cameraState.radius, CONFIG.defaultDistance, 0.08);
+                cameraState.zoomVelocity = 0;
+                if (Math.abs(cameraState.radius - CONFIG.defaultDistance) < 1) {
+                    window.isResettingCamera = false;
+                }
+            } else {
+                if (Math.abs(cameraState.handRotation) > 0.1) {
+                    cameraState.phi += cameraState.handRotation * CONFIG.rotationSpeedMultiplier;
+                }
+
+                if (cameraState.isFist) {
+                    cameraState.zoomVelocity += 0.5; 
+                } else if (cameraState.isOpen) {
+                    const diff = cameraState.radius - CONFIG.minDistance;
+                    cameraState.zoomVelocity = -diff * 0.05;
+                } else {
+                    cameraState.zoomVelocity *= 0.9;
+                }
+
+                cameraState.radius += cameraState.zoomVelocity;
+
+                if (cameraState.radius < CONFIG.minDistance) {
+                    cameraState.radius = CONFIG.minDistance;
+                    cameraState.zoomVelocity = 0;
+                }
+                if (cameraState.radius > 2000) cameraState.radius = 2000;
+
+                if (!cameraState.isFist && !cameraState.isOpen && Math.abs(cameraState.handRotation) < 0.1 && !window.isExploding) {
+                   cameraState.phi -= 0.001;
+                }
+            }
+
+            camera.position.x = cameraState.radius * Math.sin(cameraState.theta) * Math.sin(cameraState.phi);
+            camera.position.y = cameraState.radius * Math.cos(cameraState.theta);
+            camera.position.z = cameraState.radius * Math.sin(cameraState.theta) * Math.cos(cameraState.phi);
+
+            camera.lookAt(0, 0, 0);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.005;
+
+            if (planetMat) {
+                planetMat.color.lerp(targetPlanetColor, 0.05);
+            }
+
+            if (planetSystem) planetSystem.rotation.y = time * 0.1;
+            if (ringSystem1) ringSystem1.rotation.z -= 0.002;
+            if (ringSystem2) ringSystem2.rotation.z += 0.003;
+
+            if (planetSystem) {
+                const positions = planetSystem.geometry.attributes.position.array;
+                const originals = planetSystem.geometry.attributes.originalPosition.array;
+                
+                if (window.isExploding) {
+                    window.explosionFactor = THREE.MathUtils.lerp(window.explosionFactor || 0, 1.0, 0.08);
+                } else {
+                    window.explosionFactor = THREE.MathUtils.lerp(window.explosionFactor || 0, 0.0, 0.05);
+                }
+                
+                const factor = window.explosionFactor;
+                if (factor > 0.01 || window.isExploding) {
+                    for (let i = 0; i < positions.length; i += 3) {
+                        const ox = originals[i];
+                        const oy = originals[i+1];
+                        const oz = originals[i+2];
+                        
+                        const len = Math.sqrt(ox*ox + oy*oy + oz*oz);
+                        const dirX = ox / (len || 1);
+                        const dirY = oy / (len || 1);
+                        const dirZ = oz / (len || 1);
+                        
+                        const targetLen = len + factor * 220;
+                        positions[i]   = dirX * targetLen;
+                        positions[i+1] = dirY * targetLen;
+                        positions[i+2] = dirZ * targetLen;
+                    }
+                    planetSystem.geometry.attributes.position.needsUpdate = true;
+                }
+            }
+
+            updateCamera();
+            composer.render();
+        }
+
+        // 辅助几何算法：计算两点间欧氏距离
+        function getDistance(p1, p2) {
+            return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        }
+
+        // 手势识别算法逻辑
+        function recognizeGesture(landmarks) {
+            const WRIST = 0;
+            const THUMB_IP = 3, THUMB_TIP = 4;
+            const INDEX_MCP = 5, INDEX_PIP = 6, INDEX_TIP = 8;
+            const MIDDLE_MCP = 9, MIDDLE_PIP = 10, MIDDLE_TIP = 12;
+            const RING_PIP = 14, RING_TIP = 16;
+            const PINKY_MCP = 17, PINKY_PIP = 18, PINKY_TIP = 20;
+
+            const isIndexExtended = getDistance(landmarks[INDEX_TIP], landmarks[WRIST]) > getDistance(landmarks[INDEX_PIP], landmarks[WRIST]);
+            const isMiddleExtended = getDistance(landmarks[MIDDLE_TIP], landmarks[WRIST]) > getDistance(landmarks[MIDDLE_PIP], landmarks[WRIST]);
+            const isRingExtended = getDistance(landmarks[RING_TIP], landmarks[WRIST]) > getDistance(landmarks[RING_PIP], landmarks[WRIST]);
+            const isPinkyExtended = getDistance(landmarks[PINKY_TIP], landmarks[WRIST]) > getDistance(landmarks[PINKY_PIP], landmarks[WRIST]);
+
+            const isThumbExtended = getDistance(landmarks[THUMB_TIP], landmarks[INDEX_MCP]) > getDistance(landmarks[THUMB_IP], landmarks[INDEX_MCP]);
+
+            const thumbIndexDist = getDistance(landmarks[THUMB_TIP], landmarks[INDEX_TIP]);
+            const palmSize = getDistance(landmarks[WRIST], landmarks[MIDDLE_MCP]);
+
+            const dx = landmarks[PINKY_MCP].x - landmarks[INDEX_MCP].x;
+            const dy = landmarks[PINKY_MCP].y - landmarks[INDEX_MCP].y;
+            const wristRotation = Math.atan2(dy, dx); 
+
+            if (thumbIndexDist < palmSize * 0.25 && isMiddleExtended && isRingExtended && isPinkyExtended) {
+                return { type: 'OK', rotation: 0 };
+            }
+
+            if (isIndexExtended && isMiddleExtended && !isRingExtended && !isPinkyExtended) {
+                return { type: 'PEACE', rotation: 0 };
+            }
+
+            const isThumbPointingUp = landmarks[THUMB_TIP].y < landmarks[INDEX_MCP].y - 0.05;
+            if (isThumbExtended && isThumbPointingUp && !isIndexExtended && !isMiddleExtended && !isRingExtended && !isPinkyExtended) {
+                return { type: 'THUMBS_UP', rotation: 0 };
+            }
+
+            if (!isIndexExtended && !isMiddleExtended && !isRingExtended && !isPinkyExtended) {
+                return { type: 'FIST', rotation: 0 };
+            }
+
+            if (isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended) {
+                let rotVelocity = 0;
+                if (Math.abs(wristRotation) > 0.15) {
+                    rotVelocity = wristRotation > 0 ? 1 : -1;
+                }
+                return { type: 'OPEN_PALM', rotation: rotVelocity };
+            }
+
+            return { type: 'UNKNOWN', rotation: 0 };
+        }
+
+        // 模拟控制面板响应函数
+        window.simAction = function(type) {
+            window.isExploding = false;
+            window.isResettingCamera = false;
+            cameraState.isFist = false;
+            cameraState.isOpen = false;
+
+            if (type === 'EXPLODE') {
+                window.isExploding = true;
+                statusEl.innerText = "状态: [模拟] 👌 超新星大爆炸";
+                statusEl.style.color = "#ffcc00";
+            } else if (type === 'COLOR') {
+                currentColorIndex = (currentColorIndex + 1) % COLOR_PALETTE.length;
+                targetPlanetColor.set(COLOR_PALETTE[currentColorIndex].color);
+                statusEl.innerText = `状态: [模拟] ✌️ 切换色彩 (${COLOR_PALETTE[currentColorIndex].name})`;
+                statusEl.style.color = "#00ffff";
+            } else if (type === 'RESET') {
+                window.isResettingCamera = true;
+                statusEl.innerText = "状态: [模拟] 👍 视角已重置";
+                statusEl.style.color = "#00ff66";
+            } else if (type === 'ZOOM_IN') {
+                cameraState.isOpen = true;
+                statusEl.innerText = "状态: [模拟] ✋ 相机靠近";
+                statusEl.style.color = "#44ff44";
+            } else if (type === 'ZOOM_OUT') {
+                cameraState.isFist = true;
+                statusEl.innerText = "状态: [模拟] ✊ 相机拉远";
+                statusEl.style.color = "#ff4444";
+            }
+        };
+
+        // 尝试初始化摄像头，若失败则降级为纯模拟模式（保留右下角空窗口，去掉文字）
+        function initCameraWithFallback() {
+            const videoElement = document.getElementById('input-video');
+            const previewCanvas = document.getElementById('webcam-preview');
+            const previewCtx = previewCanvas.getContext('2d');
+
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    videoElement.srcObject = stream;
+                    videoElement.play();
+                    loadingEl.style.display = 'none';
+                    
+                    const hands = new window.Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+                    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+                    
+                    hands.onResults(results => {
+                        previewCtx.save();
+                        previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+                        previewCtx.drawImage(results.image, 0, 0, previewCanvas.width, previewCanvas.height);
+                        
+                        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                            const landmarks = results.multiHandLandmarks[0];
+                            drawConnectors(previewCtx, landmarks, HAND_CONNECTIONS, {color: '#00ffcc', lineWidth: 2});
+                            drawLandmarks(previewCtx, landmarks, {color: '#ffaa00', lineWidth: 1, radius: 2});
+
+                            const gesture = recognizeGesture(landmarks);
+                            
+                            cameraState.isFist = false;
+                            cameraState.isOpen = false;
+                            cameraState.handRotation = 0;
+
+                            const now = Date.now();
+
+                            if (gesture.type === 'OK') {
+                                window.isExploding = true;
+                                statusEl.innerText = "状态: 👌 超新星大爆炸！";
+                                statusEl.style.color = "#ffcc00";
+                            } else {
+                                window.isExploding = false;
+
+                                if (gesture.type === 'PEACE') {
+                                    if (now - lastColorChangeTime > 800) {
+                                        currentColorIndex = (currentColorIndex + 1) % COLOR_PALETTE.length;
+                                        targetPlanetColor.set(COLOR_PALETTE[currentColorIndex].color);
+                                        lastColorChangeTime = now;
+                                    }
+                                    statusEl.innerText = `状态: ✌️ 切换色彩 (${COLOR_PALETTE[currentColorIndex].name})`;
+                                    statusEl.style.color = "#00ffff";
+                                } else if (gesture.type === 'THUMBS_UP') {
+                                    window.isResettingCamera = true;
+                                    statusEl.innerText = "状态: 👍 视角平滑重置";
+                                    statusEl.style.color = "#00ff66";
+                                } else if (gesture.type === 'FIST') {
+                                    cameraState.isFist = true;
+                                    statusEl.innerText = "状态: ✊ 镜头拉远 (握拳)";
+                                    statusEl.style.color = "#ff4444";
+                                } else if (gesture.type === 'OPEN_PALM') {
+                                    cameraState.isOpen = true;
+                                    cameraState.handRotation = gesture.rotation;
+                                    if (Math.abs(gesture.rotation) > 0.1) {
+                                        statusEl.innerText = "状态: 🔄 旋转与靠近 (手掌)";
+                                    } else {
+                                        statusEl.innerText = "状态: ✋ 镜头靠近 (张手)";
+                                    }
+                                    statusEl.style.color = "#44ff44";
+                                } else {
+                                    statusEl.innerText = "状态: 🖐 识别中 / 追踪中...";
+                                    statusEl.style.color = "#00ffcc";
+                                }
+                            }
+                        } else {
+                            statusEl.innerText = "状态: 未检测到手部";
+                            statusEl.style.color = "rgba(255,255,255,0.5)";
+                        }
+                        previewCtx.restore();
+                    });
+
+                    function videoLoop() {
+                        if (videoElement.readyState >= 2) {
+                            hands.send({image: videoElement});
+                        }
+                        requestAnimationFrame(videoLoop);
+                    }
+                    videoLoop();
+                })
+                .catch(err => {
+                    console.warn("摄像头不可用，已自动切换至鼠标/按钮模拟交互模式:", err);
+                    loadingEl.style.display = 'none';
+                    statusEl.innerText = "状态: 摄像头未就绪 (已启用鼠标与按钮模拟)";
+                    // 仅填充黑色背景，不绘制任何多余文字
+                    previewCtx.fillStyle = "#111";
+                    previewCtx.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
+                });
+        }
+
+        initThree();
+        animate();
+        setTimeout(initCameraWithFallback, 500);
+    </script>
+</body>
+</html>
